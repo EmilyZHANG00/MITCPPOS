@@ -1,5 +1,7 @@
 struct stat;
 struct rtcdate;
+struct sysinfo;
+
 
 // system calls
 int fork(void);
@@ -23,6 +25,8 @@ int getpid(void);
 char* sbrk(int);
 int sleep(int);
 int uptime(void);
+int trace(int);     //声明用户可以调用这个系统调用
+int sysinfo(struct sysinfo*);     //声明用户可以调用这个系统调用
 
 // ulib.c
 int stat(const char*, struct stat*);

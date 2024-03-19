@@ -80,3 +80,31 @@ kalloc(void)
     memset((char*)r, 5, PGSIZE); // fill with junk
   return (void*)r;
 }
+
+// void freebytes(uint64 *dst)
+// {
+//   *dst=0;
+//   struct run *p=kmem.freelist;   //空闲链表的表头
+//   acquire(&kmem.lock);  //获取权限
+//   while(p)
+//   {
+//     *dst+=PGSIZE;   //页表大小？
+//     p=p->next;
+//   }
+//   release(&kmem.lock);
+// }
+
+
+uint64  freebytes(void)
+{
+  uint64 dst=0;
+  struct run *p=kmem.freelist;   //空闲链表的表头
+  acquire(&kmem.lock);  //获取权限
+  while(p)
+  {
+    dst+=PGSIZE;   //页表大小？
+    p=p->next;
+  }
+  release(&kmem.lock);
+  return dst;
+}
