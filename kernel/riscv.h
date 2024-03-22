@@ -326,23 +326,23 @@ sfence_vma()
 #define PGROUNDUP(sz)  (((sz)+PGSIZE-1) & ~(PGSIZE-1))
 #define PGROUNDDOWN(a) (((a)) & ~(PGSIZE-1))
 
-#define PTE_V (1L << 0) // valid
-#define PTE_R (1L << 1)
-#define PTE_W (1L << 2)
-#define PTE_X (1L << 3)
-#define PTE_U (1L << 4) // 1 -> user can access
+#define PTE_V (1L << 0) // valid  页表项中的falg位置  V表示是否有效
+#define PTE_R (1L << 1)  // 可以读
+#define PTE_W (1L << 2)   //可以写
+#define PTE_X (1L << 3)   //可以执行
+#define PTE_U (1L << 4) // 1 -> user can access   用户可以访问
 
 // shift a physical address to the right place for a PTE.
-#define PA2PTE(pa) ((((uint64)pa) >> 12) << 10)
+#define PA2PTE(pa) ((((uint64)pa) >> 12) << 10)    //把一个物理地址变成一个PTE表项。(物理地址的后12位是偏移量，右移出去，然后左移10位作为标志位)
 
-#define PTE2PA(pte) (((pte) >> 10) << 12)
+#define PTE2PA(pte) (((pte) >> 10) << 12)    //从一个页表项，找到对应的物理页的开头物理地址
 
-#define PTE_FLAGS(pte) ((pte) & 0x3FF)
+#define PTE_FLAGS(pte) ((pte) & 0x3FF)     //获取某个表项的FLAG位
 
 // extract the three 9-bit page table indices from a virtual address.
 #define PXMASK          0x1FF // 9 bits
-#define PXSHIFT(level)  (PGSHIFT+(9*(level)))
-#define PX(level, va) ((((uint64) (va)) >> PXSHIFT(level)) & PXMASK)
+#define PXSHIFT(level)  (PGSHIFT+(9*(level)))    //需要向右移动的bit数目，如果是0级别，那么移动12bit即可，1级移动21bit，2级移动30bit
+#define PX(level, va) ((((uint64) (va)) >> PXSHIFT(level)) & PXMASK)   //向右移动相应的bit位后再去对应的后9位bit与全1按位与，得到的值就是对应级别的表项index
 
 // one beyond the highest possible virtual address.
 // MAXVA is actually one bit less than the max allowed by

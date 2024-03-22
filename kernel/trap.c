@@ -31,7 +31,7 @@ trapinithart(void)
 
 //
 // handle an interrupt, exception, or system call from user space.
-// called from trampoline.S
+// called from trampoline.S     处理来自用户空间的中断,异常或者系统调用
 //
 void
 usertrap(void)

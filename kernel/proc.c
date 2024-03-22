@@ -6,6 +6,7 @@
 #include "proc.h"
 #include "defs.h"
 
+
 struct cpu cpus[NCPU];
 
 struct proc proc[NPROC];
@@ -21,27 +22,33 @@ static void freeproc(struct proc *p);
 
 extern char trampoline[]; // trampoline.S
 
-// initialize the proc table at boot time.
+
+
+
+
+
+
+// initialize the proc table at boot time.    在开启机器的时候初始化进程表(也就是对每个进程的proc结构体进行赋值)
 void
 procinit(void)
 {
   struct proc *p;
-  
   initlock(&pid_lock, "nextpid");
   for(p = proc; p < &proc[NPROC]; p++) {
       initlock(&p->lock, "proc");
 
-      // Allocate a page for the process's kernel stack.
+      // Allocate a page for the process's kernel stack.    依次为每个进程分配2个页面作为该进程的内核栈，每个后面都跟一个guard页面，从虚拟地址的最高往下依次分配
       // Map it high in memory, followed by an invalid
       // guard page.
-      char *pa = kalloc();
-      if(pa == 0)
-        panic("kalloc");
-      uint64 va = KSTACK((int) (p - proc));
-      kvmmap(va, (uint64)pa, PGSIZE, PTE_R | PTE_W);
-      p->kstack = va;
+
+      // char *pa = kalloc();                  //
+      // if(pa == 0)
+      //   panic("kalloc");
+      // uint64 va = KSTACK((int) (p - proc));    
+      // kvmmap(va, (uint64)pa, PGSIZE, PTE_R | PTE_W);
+      // p->kstack = va;           
   }
-  kvminithart();
+  kvminithart();    //cpu的stap寄存器设置为内核页表的地址
 }
 
 // Must be called with interrupts disabled,
@@ -85,10 +92,10 @@ allocpid() {
   return pid;
 }
 
-// Look in the process table for an UNUSED proc.
+// Look in the process table for an UNUSED proc.       查找进程表找到一个unused的proc，如果找到一个unsed的proc的话就把他的状态初始化成可以在内核中运行的状态
 // If found, initialize state required to run in the kernel,
 // and return with p->lock held.
-// If there are no free procs, or a memory allocation fails, return 0.
+// If there are no free procs, or a memory allocation fails, return 0.     //如果当前没有UNUSED的进程，或者内存已经满了的话就不能够进行分配了，返回0
 static struct proc*
 allocproc(void)
 {
@@ -104,7 +111,7 @@ allocproc(void)
   }
   return 0;
 
-found:
+found:       // 找到了一个空的进程 进行状态的初始化
   p->pid = allocpid();
 
   // Allocate a trapframe page.
@@ -121,11 +128,31 @@ found:
     return 0;
   }
 
+  
+  //调用proc_kpt_init 对进程的内核页表进行初始化
+  p->kernelpt=proc_kpt_init();
+  if(p->kernelpt==0)
+  {
+    freeproc(p);
+    release(&p->lock);
+    return 0;
+  }
+
+  //每一个进程的内核页表都有关于该进程的内核栈的一个映射
+  char *pa = kalloc();               
+  if(pa == 0)
+    panic("kalloc");
+  uint64 va = KSTACK((int) (p - proc));    
+  uvmmap(p->kernelpt,va, (uint64)pa, PGSIZE, PTE_R | PTE_W);    // 建立逻辑地址和物理地址的映射
+  p->kstack = va;  
+
+
   // Set up new context to start executing at forkret,
   // which returns to user space.
   memset(&p->context, 0, sizeof(p->context));
   p->context.ra = (uint64)forkret;
   p->context.sp = p->kstack + PGSIZE;
+
 
   return p;
 }
@@ -142,6 +169,7 @@ freeproc(struct proc *p)
   if(p->pagetable)
     proc_freepagetable(p->pagetable, p->sz);
   p->pagetable = 0;
+
   p->sz = 0;
   p->pid = 0;
   p->parent = 0;
@@ -149,6 +177,13 @@ freeproc(struct proc *p)
   p->chan = 0;
   p->killed = 0;
   p->xstate = 0;
+  
+  // 释放内核栈
+  uvmunmap(p->kernelpt, p->kstack, 1, 1);  
+  p->kstack = 0; 
+  // 释放进程的内核页表
+  proc_freekernelpt(p->kernelpt);
+  p->kernelpt=0;
   p->state = UNUSED;
 }
 
@@ -187,6 +222,7 @@ proc_pagetable(struct proc *p)
 
 // Free a process's page table, and free the
 // physical memory it refers to.
+// 释放进程的页表
 void
 proc_freepagetable(pagetable_t pagetable, uint64 sz)
 {
@@ -194,6 +230,28 @@ proc_freepagetable(pagetable_t pagetable, uint64 sz)
   uvmunmap(pagetable, TRAPFRAME, 1, 0);
   uvmfree(pagetable, sz);
 }
+
+// 释放进程的内核页表  递归释放  3级
+// 递归从最下面一级开始，先把这一块内存中有效的PTE都指向0，然后把这一块内存释放掉
+// 怎么样判断当前pte指向的物理地址的内容是页表还是物理页数据
+// 如果是页表项，则flag的标记是有效，但是不可读、不可写、也不可执行，如果是物理页数据的话应该是可读/可以写/可以执行的
+// 
+void
+proc_freekernelpt(pagetable_t kernelpt)
+{
+  for(int i = 0; i < 512; i++){
+    pte_t pte = kernelpt[i];
+    if(pte & PTE_V){
+      kernelpt[i] = 0;
+      if ((pte & (PTE_R|PTE_W|PTE_X)) == 0){
+        uint64 child = PTE2PA(pte);   //将pte表项转换为物理地址
+        proc_freekernelpt((pagetable_t)child);
+      }
+    }
+  }
+  kfree((void*)kernelpt);
+}
+
 
 // a user program that calls exec("/init")
 // od -t xC initcode
@@ -227,7 +285,8 @@ userinit(void)
 
   safestrcpy(p->name, "initcode", sizeof(p->name));
   p->cwd = namei("/");
-
+  
+  u2kvmcopy(p->pagetable, p->kernelpt, 0, p->sz);
   p->state = RUNNABLE;
 
   release(&p->lock);
@@ -235,6 +294,7 @@ userinit(void)
 
 // Grow or shrink user memory by n bytes.
 // Return 0 on success, -1 on failure.
+// 增大或减小n个字节的用户内存 
 int
 growproc(int n)
 {
@@ -242,10 +302,15 @@ growproc(int n)
   struct proc *p = myproc();
 
   sz = p->sz;
+
   if(n > 0){
+    if(PGROUNDUP(sz + n) >= PLIC)
+    return -1;
     if((sz = uvmalloc(p->pagetable, sz, sz + n)) == 0) {
       return -1;
     }
+
+    u2kvmcopy(p->pagetable, p->kernelpt, sz - n, sz);   //这里只需要关心新增的这一段就可以了
   } else if(n < 0){
     sz = uvmdealloc(p->pagetable, sz, sz + n);
   }
@@ -262,19 +327,18 @@ fork(void)
   struct proc *np;
   struct proc *p = myproc();
 
-  // Allocate process.
+  // Allocate process.  分配一个新进程
   if((np = allocproc()) == 0){
     return -1;
   }
 
-  // Copy user memory from parent to child.
+  // Copy user memory from parent to child.  复制父进程内存到子进程
   if(uvmcopy(p->pagetable, np->pagetable, p->sz) < 0){
     freeproc(np);
     release(&np->lock);
     return -1;
   }
   np->sz = p->sz;
-
   np->parent = p;
 
   // copy saved user registers.
@@ -295,6 +359,8 @@ fork(void)
 
   np->state = RUNNABLE;
 
+  //复制子进程的页表到进程内核页表
+  u2kvmcopy(np->pagetable, np->kernelpt, 0, p->sz);
   release(&np->lock);
 
   return pid;
@@ -447,7 +513,9 @@ wait(uint64 addr)
 }
 
 // Per-CPU process scheduler.
-// Each CPU calls scheduler() after setting itself up.
+// Each CPU calls scheduler() after setting itself up.    
+// 每个cpu在设置好自身后都要调用scheduler,scheduler不会退出，而是会一直循环，
+// 循环的内容为：选择一个进程运行，转换到要运行那个进程的状态，通过swich将控制权转移到调度器
 // Scheduler never returns.  It loops, doing:
 //  - choose a process to run.
 //  - swtch to start running that process.
@@ -473,7 +541,15 @@ scheduler(void)
         // before jumping back to us.
         p->state = RUNNING;
         c->proc = p;
+        
+        // 使用当前进程的 kernal page 表
+        proc_inithart(p->kernelpt);
+
+        //调度、执行进程
         swtch(&c->context, &p->context);
+
+        // 恢复到全局页表
+        kvminithart();  
 
         // Process is done running for now.
         // It should have changed its p->state before coming back.

@@ -1,4 +1,4 @@
-// Saved registers for kernel context switches.
+// Saved registers for kernel context switches.     在进行转换的时候，内核的上下文状态
 struct context {
   uint64 ra;
   uint64 sp;
@@ -20,8 +20,8 @@ struct context {
 
 // Per-CPU state.
 struct cpu {
-  struct proc *proc;          // The process running on this cpu, or null.
-  struct context context;     // swtch() here to enter scheduler().
+  struct proc *proc;          // The process running on this cpu, or null.   //当前正在与运行的进程
+  struct context context;     // swtch() here to enter scheduler().     //上下文
   int noff;                   // Depth of push_off() nesting.
   int intena;                 // Were interrupts enabled before push_off()?
 };
@@ -98,6 +98,7 @@ struct proc {
   uint64 kstack;               // Virtual address of kernel stack
   uint64 sz;                   // Size of process memory (bytes)
   pagetable_t pagetable;       // User page table
+  pagetable_t kernelpt;       // 给每个进程添加一个自己的内核页表
   struct trapframe *trapframe; // data page for trampoline.S
   struct context context;      // swtch() here to run process
   struct file *ofile[NOFILE];  // Open files

@@ -92,6 +92,7 @@ int             fork(void);
 int             growproc(int);
 pagetable_t     proc_pagetable(struct proc *);
 void            proc_freepagetable(pagetable_t, uint64);
+void            proc_freekernelpt(pagetable_t kernelpt);  //释放进程的特有内核页表    
 int             kill(int);
 struct cpu*     mycpu(void);
 struct cpu*     getmycpu(void);
@@ -158,15 +159,25 @@ void            uartputc_sync(int);
 int             uartgetc(void);
 
 // vm.c
+
+void            vmprint(pagetable_t);   
 void            kvminit(void);
+pagetable_t     proc_kpt_init(void); // 用于内核页表的初始化
 void            kvminithart(void);
+void            proc_inithart(pagetable_t); // 将进程的内核页表保存到SATP寄存器
+
 uint64          kvmpa(uint64);
 void            kvmmap(uint64, uint64, uint64, int);
+void            uvmmap(pagetable_t,uint64, uint64, uint64, int);    // 将进程的内核页的逻辑地址和物理地址进程映射
 int             mappages(pagetable_t, uint64, uint64, uint64, int);
 pagetable_t     uvmcreate(void);
 void            uvminit(pagetable_t, uchar *, uint);
 uint64          uvmalloc(pagetable_t, uint64, uint64);
 uint64          uvmdealloc(pagetable_t, uint64, uint64);
+
+
+
+
 #ifdef SOL_COW
 #else
 int             uvmcopy(pagetable_t, pagetable_t, uint64);
@@ -179,6 +190,10 @@ int             copyout(pagetable_t, uint64, char *, uint64);
 int             copyin(pagetable_t, char *, uint64, uint64);
 int             copyinstr(pagetable_t, char *, uint64, uint64);
 
+//lab3 新增函数
+int             copyin_new(pagetable_t, char *, uint64, uint64);
+int             copyinstr_new(pagetable_t, char *, uint64, uint64);
+void            u2kvmcopy(pagetable_t, pagetable_t, uint64, uint64);
 // plic.c
 void            plicinit(void);
 void            plicinithart(void);

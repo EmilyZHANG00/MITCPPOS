@@ -62,7 +62,7 @@ kfree(void *pa)
   release(&kmem.lock);
 }
 
-// Allocate one 4096-byte page of physical memory.
+// Allocate one 4096-byte page of physical memory.   从物理内存上分配一个4kb大小的页面，给内核返回该页面的指针，如果没有可用的了的话，就返回0
 // Returns a pointer that the kernel can use.
 // Returns 0 if the memory cannot be allocated.
 void *
