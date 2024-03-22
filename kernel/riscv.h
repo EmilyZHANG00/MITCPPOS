@@ -311,13 +311,23 @@ r_ra()
   return x;
 }
 
-// flush the TLB.
+// flush the TLB.    清空页表
 static inline void
 sfence_vma()
 {
   // the zero, zero means flush all TLB entries.
   asm volatile("sfence.vma zero, zero");
 }
+
+// 读取s0寄存器的内容
+static inline uint64
+r_fp()
+{
+  uint64 x;
+  asm volatile("mv %0, s0" : "=r" (x) );
+  return x;
+}
+
 
 
 #define PGSIZE 4096 // bytes per page

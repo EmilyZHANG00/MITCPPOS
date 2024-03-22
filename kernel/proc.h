@@ -103,4 +103,11 @@ struct proc {
   struct file *ofile[NOFILE];  // Open files
   struct inode *cwd;           // Current directory
   char name[16];               // Process name (debugging)
+
+  // trap alarm
+  uint64  interval;             //时间间隔
+  void (*p_func)();              //要执行的函数指针
+  uint64  past_time;            //已经过去的时间间隔数目;
+  uint64  is_alarming;             //表示是否已经在执行alarming的过程中
+  struct trapframe  *alarm_trapframe   ;         //在调用alarming之前程序的trapframe内容(在调用完alarm的函数之后，应该恢复到没有调用这个函数之前各个寄存器的状态)
 };

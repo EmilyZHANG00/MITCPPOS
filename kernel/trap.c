@@ -32,7 +32,7 @@ trapinithart(void)
 //
 // handle an interrupt, exception, or system call from user space.
 // called from trampoline.S
-//
+//  处理中断或者异常，会在trampoline中被调用
 void
 usertrap(void)
 {
@@ -76,9 +76,26 @@ usertrap(void)
   if(p->killed)
     exit(-1);
 
-  // give up the CPU if this is a timer interrupt.
+  // give up the CPU if this is a timer interrupt. 如果是计时器中断的话，放弃cpu的控制权
   if(which_dev == 2)
+  {
+    struct proc *p=myproc();
+    //每次计时器中断都去判断一次是不是已经到达了设定的间隔时间
+    if(++(p->past_time)==p->interval && p->is_alarming==0)
+    {
+        // 先把原来trapframe当前的内容保存好(不需要逻辑地址和物理地址的转换??)
+        // p 是当前进程结构体的状态,这些东西本身就是在内核态进行申请和释放的，本身就是内核逻辑地址空间的东西，不需要考虑页表的转换
+        // 之前的copyin copyout需要转换是因为在用户进程中，把一些指针数据作为参数进行传递
+        // 这些指针的指向是相对于用户空间而言的，无法通过内核空间页表进行映射到对于位置，所以需要先通过软件办法转换为相对于内核空间页表的地址
+          memmove(p->alarm_trapframe, p->trapframe, sizeof(struct trapframe));
+        //去执行相关的函数(改变pc寄存器的值),那么这里后面就会去执行p_func函数
+          p->trapframe->epc = (uint64)p->p_func;
+        // past_time置0
+        p->past_time=0;
+        p->is_alarming = 1;
+    }
     yield();
+  }
 
   usertrapret();
 }

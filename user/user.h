@@ -24,6 +24,9 @@ char* sbrk(int);
 int sleep(int);
 int uptime(void);
 
+int sigalarm(int ticks, void (*handler)());
+int sigreturn(void); //新添加两个系统调用
+
 // ulib.c
 int stat(const char*, struct stat*);
 char* strcpy(char*, const char*);
