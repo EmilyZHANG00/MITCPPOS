@@ -107,13 +107,13 @@ allocproc(void)
 found:
   p->pid = allocpid();
 
-  // Allocate a trapframe page.
+  // Allocate a trapframe page. 分配一个trapframe帧
   if((p->trapframe = (struct trapframe *)kalloc()) == 0){
     release(&p->lock);
     return 0;
   }
 
-  // An empty user page table.
+  // An empty user page table.  分配一块内存用来作为用户页表,并且把这个用户页表的指针
   p->pagetable = proc_pagetable(p);
   if(p->pagetable == 0){
     freeproc(p);

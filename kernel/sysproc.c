@@ -46,9 +46,25 @@ sys_sbrk(void)
 
   if(argint(0, &n) < 0)
     return -1;
+
   addr = myproc()->sz;
-  if(growproc(n) < 0)
+
+  struct proc* p = myproc();
+  addr = p->sz;
+  
+  uint64 sz = p->sz;
+  if(n > 0 ) {
+    // lazy allocation  对大小进行更改，但是不实际分配内存
+    p->sz += n;
+  } else if(sz + n > 0) {
+    sz = uvmdealloc(p->pagetable, sz, sz + n);
+    p->sz = sz;
+  } else {
     return -1;
+  }
+
+  // if(growproc(n) < 0)
+  //   return -1;
   return addr;
 }
 

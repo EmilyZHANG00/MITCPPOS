@@ -67,7 +67,34 @@ usertrap(void)
     syscall();
   } else if((which_dev = devintr()) != 0){
     // ok
-  } else {
+  }
+  else if(r_scause()==13 || r_scause()==15)     //通过r_scause() 判断发生异常的原因，r_stval()判断发生异常的虚拟地址 
+  {
+    //1.确定发生错误的地址
+    uint64 va=r_stval();
+
+    //2.判断该虚拟地址是否合法,如果大于进程空间(sprk参数为负数的话就会导致这种情况) 或者低于栈顶都是无效的
+    if( p->sz-1 < va || va < PGROUNDUP(p->trapframe->sp))  
+      p->killed=1;
+    else
+    {
+       //3.获取一个物理页面 并清空内容
+        char *mem=kalloc();
+        if(mem==0)
+          p->killed=1;
+        else
+        {
+            //4. 创建映射
+          memset(mem, 0, PGSIZE);
+          if(mappages(p->pagetable,PGROUNDDOWN(va), PGSIZE, (uint64)mem, PTE_W|PTE_X|PTE_R|PTE_U) != 0){
+          kfree(mem);
+          //如果分配失败的话，终止进程
+          p->killed=1;
+        }
+        }
+    }
+  }
+  else {
     printf("usertrap(): unexpected scause %p pid=%d\n", r_scause(), p->pid);
     printf("            sepc=%p stval=%p\n", r_sepc(), r_stval());
     p->killed = 1;

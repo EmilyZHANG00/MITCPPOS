@@ -5,6 +5,8 @@
 #include "riscv.h"
 #include "defs.h"
 #include "fs.h"
+#include "spinlock.h"
+#include "proc.h"
 
 /*
  * the kernel's page table.
@@ -14,6 +16,38 @@ pagetable_t kernel_pagetable;
 extern char etext[];  // kernel.ld sets this to end of kernel code.
 
 extern char trampoline[]; // trampoline.S
+
+
+void
+_vmprint(pagetable_t pagetable, int level){
+  // there are 2^9 = 512 PTEs in a page table.
+  for(int i = 0; i < 512; i++){
+    pte_t pte = pagetable[i];
+    // PTE_V is a flag for whether the page table is valid
+    if(pte & PTE_V){
+      for (int j = 0; j < level; j++){
+        if (j) printf(" ");
+        printf("..");
+      }
+      uint64 child = PTE2PA(pte);
+      printf("%d: pte %p pa %p\n", i, pte, child);
+      if((pte & (PTE_R|PTE_W|PTE_X)) == 0){
+        // this PTE points to a lower-level page table.
+        _vmprint((pagetable_t)child, level + 1);
+      }
+    }
+  }
+}
+
+/**
+ * @brief vmprint 打印页表
+ * @param pagetable 所要打印的页表
+ */
+void
+vmprint(pagetable_t pagetable){
+  printf("page table %p\n", pagetable);
+  _vmprint(pagetable, 1);
+}
 
 /*
  * create a direct-map page table for the kernel.
@@ -101,10 +135,26 @@ walkaddr(pagetable_t pagetable, uint64 va)
     return 0;
 
   pte = walk(pagetable, va, 0);
-  if(pte == 0)
-    return 0;
-  if((*pte & PTE_V) == 0)
-    return 0;
+  // if(pte == 0)
+  //   return 0;
+  // if((*pte & PTE_V) == 0)
+  //   return 0;
+
+  // //如果pte表项为空或者为无效表项的话,就再此建立并赋值给子进程
+    if (pte == 0 || (*pte & PTE_V) == 0) {
+    //pa = lazyalloc(va);
+    struct proc *p = myproc();
+    if(va >= p->sz || va < PGROUNDUP(p->trapframe->sp)) 
+      return 0;
+    pa = (uint64)kalloc();
+    if (pa == 0) return 0;
+    if (mappages(p->pagetable, va, PGSIZE, pa, PTE_W|PTE_R|PTE_U|PTE_X) != 0) {
+      kfree((void*)pa);
+	  return 0;
+    }
+	return pa;
+  }
+
   if((*pte & PTE_U) == 0)
     return 0;
   pa = PTE2PA(*pte);
@@ -170,6 +220,8 @@ mappages(pagetable_t pagetable, uint64 va, uint64 size, uint64 pa, int perm)
 // Remove npages of mappings starting from va. va must be
 // page-aligned. The mappings must exist.
 // Optionally free the physical memory.
+// 移除映射的表项
+// walk会在没有相应的级别de页表的时候自动分配一个page
 void
 uvmunmap(pagetable_t pagetable, uint64 va, uint64 npages, int do_free)
 {
@@ -181,9 +233,15 @@ uvmunmap(pagetable_t pagetable, uint64 va, uint64 npages, int do_free)
 
   for(a = va; a < va + npages*PGSIZE; a += PGSIZE){
     if((pte = walk(pagetable, a, 0)) == 0)
-      panic("uvmunmap: walk");
-    if((*pte & PTE_V) == 0)
-      panic("uvmunmap: not mapped");
+      continue;
+      //panic("uvmunmap: walk");
+
+     // pte表项是无效的(实际未分配)  对于这种情况，应该直接跳过，同时不能够让其进入dofree，不然会发生kfree错误
+    if((*pte & PTE_V) == 0)       
+      continue; 
+      //panic("uvmunmap: not mapped");
+
+
     if(PTE_FLAGS(*pte) == PTE_V)
       panic("uvmunmap: not a leaf");
     if(do_free){
@@ -225,6 +283,8 @@ uvminit(pagetable_t pagetable, uchar *src, uint sz)
 
 // Allocate PTEs and physical memory to grow process from oldsz to
 // newsz, which need not be page aligned.  Returns new size or 0 on error.
+// 并不需要是页面对齐的。为新的逻辑地址空间和物理空间之间建立映射  
+// 把用户进程的大小从oldsz增加到newsz,如果超过了一个页的大小就分配一个页，如果没有的话就啥也不用干
 uint64
 uvmalloc(pagetable_t pagetable, uint64 oldsz, uint64 newsz)
 {
@@ -313,11 +373,14 @@ uvmcopy(pagetable_t old, pagetable_t new, uint64 sz)
   uint flags;
   char *mem;
 
+
   for(i = 0; i < sz; i += PGSIZE){
     if((pte = walk(old, i, 0)) == 0)
-      panic("uvmcopy: pte should exist");
+      continue;
+      //panic("uvmcopy: pte should exist");
     if((*pte & PTE_V) == 0)
-      panic("uvmcopy: page not present");
+      continue;
+      //panic("uvmcopy: page not present");
     pa = PTE2PA(*pte);
     flags = PTE_FLAGS(*pte);
     if((mem = kalloc()) == 0)
