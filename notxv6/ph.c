@@ -14,6 +14,7 @@ struct entry {
   struct entry *next;
 };
 struct entry *table[NBUCKET];
+pthread_mutex_t lock[NBUCKET] = { PTHREAD_MUTEX_INITIALIZER }; // 每个散列桶一把锁
 int keys[NKEYS];
 int nthread = 1;
 
@@ -25,16 +26,19 @@ now()
  return tv.tv_sec + tv.tv_usec / 1000000.0;
 }
 
+
+// 不断向链表中插入数据 首先申请一块空间,然后对这一块空间进行赋值,并且把这一块空间插入到链表头
 static void 
 insert(int key, int value, struct entry **p, struct entry *n)
 {
-  struct entry *e = malloc(sizeof(struct entry));
-  e->key = key;
-  e->value = value;
-  e->next = n;
-  *p = e;
+    struct entry *e = malloc(sizeof(struct entry));
+    e->key = key;
+    e->value = value;
+    e->next = n;
+    *p = e;
 }
 
+// 更新数据，如果有的话就更新，如果没有的话就插入
 static 
 void put(int key, int value)
 {
@@ -51,10 +55,14 @@ void put(int key, int value)
     e->value = value;
   } else {
     // the new is new.
+    pthread_mutex_lock(&lock[i]);
     insert(key, value, &table[i], table[i]);
+    pthread_mutex_unlock(&lock[i]);
   }
 }
 
+
+// 获取数据
 static struct entry*
 get(int key)
 {
@@ -96,6 +104,8 @@ get_thread(void *xa)
   return NULL;
 }
 
+
+
 int
 main(int argc, char *argv[])
 {
@@ -115,7 +125,9 @@ main(int argc, char *argv[])
     keys[i] = random();
   }
 
-  //
+
+   
+  //  创建nthread个线程,并且把这nthread个线程都join到主线程里面
   // first the puts
   //
   t0 = now();

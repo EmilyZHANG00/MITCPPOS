@@ -4,14 +4,14 @@
 #include <assert.h>
 #include <pthread.h>
 
-static int nthread = 1;
+static int nthread = 1;      //总共的线程数目
 static int round = 0;
 
 struct barrier {
-  pthread_mutex_t barrier_mutex;
-  pthread_cond_t barrier_cond;
-  int nthread;      // Number of threads that have reached this round of the barrier
-  int round;     // Barrier round
+  pthread_mutex_t barrier_mutex;       // 互斥锁
+  pthread_cond_t barrier_cond;         // 条件变量
+  int nthread;      // Number of threads that have reached this round of the barrier  记录已经到达barrar的线程数目
+  int round;        // Barrier round   屏障的轮数
 } bstate;
 
 static void
@@ -30,7 +30,21 @@ barrier()
   // Block until all threads have called barrier() and
   // then increment bstate.round.
   //
-  
+  // 上锁  确保当前只有一个线程在更改bstate的值
+  pthread_mutex_lock(&bstate.barrier_mutex);
+  bstate.nthread ++;
+
+  // 判断当前已经到达该处的线程有多少个,如果全部都到达的话，就进行wakeup
+  if(bstate.nthread == nthread)
+  {
+    bstate.round++;
+    bstate.nthread=0;
+    pthread_cond_broadcast(&bstate.barrier_cond);   //广播唤醒其它线程
+  }
+  else{
+    pthread_cond_wait(&bstate.barrier_cond, &bstate.barrier_mutex);    //等待其它线程
+  }
+   pthread_mutex_unlock(&bstate.barrier_mutex);
 }
 
 static void *
