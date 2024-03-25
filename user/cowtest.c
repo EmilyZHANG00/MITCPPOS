@@ -155,12 +155,15 @@ filetest()
       }
       exit(0);
     }
+
+    //在每个循环里面父进程向子进程写入值，分别写入0，1，2，子进程内容变(应该在新复制的内存中改变)
     if(write(fds[1], &i, sizeof(i)) != sizeof(i)){
       printf("error: write failed\n");
       exit(-1);
     }
   }
 
+   //等待所有的子进程都关闭
   int xstatus = 0;
   for(int i = 0; i < 4; i++) {
     wait(&xstatus);
@@ -169,8 +172,10 @@ filetest()
     }
   }
 
+  // 父进程内容应该不变才对
   if(buf[0] != 99){
-    printf("error: child overwrote parent\n");
+
+    printf("error: child overwrote parent\n",buf[0]);
     exit(1);
   }
 

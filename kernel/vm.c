@@ -6,6 +6,10 @@
 #include "defs.h"
 #include "fs.h"
 
+#include "spinlock.h"
+#include "proc.h"
+
+
 /*
  * the kernel's page table.
  */
@@ -21,7 +25,7 @@ extern char trampoline[]; // trampoline.S
 void
 kvminit()
 {
-  kernel_pagetable = (pagetable_t) kalloc();
+  kernel_pagetable = (pagetable_t) kalloc();    //分配第一个页面，作为页表，对页表内容进行清空
   memset(kernel_pagetable, 0, PGSIZE);
 
   // uart registers
@@ -189,6 +193,9 @@ uvmunmap(pagetable_t pagetable, uint64 va, uint64 npages, int do_free)
     if(do_free){
       uint64 pa = PTE2PA(*pte);
       kfree((void*)pa);
+      // uint64 pa = PTE2PA(*pte);
+      // if(*pte | PTE_COW == 0)
+      // kfree((void*)pa);
     }
     *pte = 0;
   }
@@ -305,28 +312,35 @@ uvmfree(pagetable_t pagetable, uint64 sz)
 // physical memory.
 // returns 0 on success, -1 on failure.
 // frees any allocated pages on failure.
+
 int
 uvmcopy(pagetable_t old, pagetable_t new, uint64 sz)
 {
   pte_t *pte;
   uint64 pa, i;
   uint flags;
-  char *mem;
+
 
   for(i = 0; i < sz; i += PGSIZE){
     if((pte = walk(old, i, 0)) == 0)
       panic("uvmcopy: pte should exist");
     if((*pte & PTE_V) == 0)
       panic("uvmcopy: page not present");
+
     pa = PTE2PA(*pte);
     flags = PTE_FLAGS(*pte);
-    if((mem = kalloc()) == 0)
-      goto err;
-    memmove(mem, (char*)pa, PGSIZE);
-    if(mappages(new, i, PGSIZE, (uint64)mem, flags) != 0){
-      kfree(mem);
+
+    //直接和原来的物理页进行映射  修改标记位  引用数目加1
+    //只有当页面本身就是可写的时候，才进行COW，如果不是可写的话，就可以不需要管，直接全部一起用一个就行
+    if(flags & PTE_W) {
+      flags = (flags | PTE_F) & ~PTE_W;
+      *pte = PA2PTE(pa) | flags;
+    }
+     
+     if(mappages(new, i, PGSIZE, pa, flags) != 0){
       goto err;
     }
+    kaddrefcnt(pa);        //映射成功，引用数目才加1
   }
   return 0;
 
@@ -334,6 +348,8 @@ uvmcopy(pagetable_t old, pagetable_t new, uint64 sz)
   uvmunmap(new, 0, i / PGSIZE, 1);
   return -1;
 }
+
+
 
 // mark a PTE invalid for user access.
 // used by exec for the user stack guard page.
@@ -351,21 +367,30 @@ uvmclear(pagetable_t pagetable, uint64 va)
 // Copy from kernel to user.
 // Copy len bytes from src to virtual address dstva in a given page table.
 // Return 0 on success, -1 on error.
+// 从内核向用户拷贝数据  
 int
 copyout(pagetable_t pagetable, uint64 dstva, char *src, uint64 len)
 {
   uint64 n, va0, pa0;
 
   while(len > 0){
-    va0 = PGROUNDDOWN(dstva);
+    va0 = PGROUNDDOWN(dstva);  
     pa0 = walkaddr(pagetable, va0);
+
+    // 处理COW页面的情况
+  if(cowpage(pagetable, va0) == 0) {
+    // 更换目标物理地址
+    pa0 = (uint64)cowalloc(pagetable, va0);
+  }
+
     if(pa0 == 0)
       return -1;
-    n = PGSIZE - (dstva - va0);
+    n = PGSIZE - (dstva - va0);   //复制整个页面中剩余的所有内容 前面的不复制么？？
     if(n > len)
       n = len;
-    memmove((void *)(pa0 + (dstva - va0)), src, n);
 
+    //把内容移动到子进程空间中
+    memmove((void *)(pa0 + (dstva - va0)), src, n);
     len -= n;
     src += n;
     dstva = va0 + PGSIZE;
