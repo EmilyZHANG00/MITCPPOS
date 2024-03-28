@@ -82,6 +82,21 @@ struct trapframe {
 
 enum procstate { UNUSED, SLEEPING, RUNNABLE, RUNNING, ZOMBIE };
 
+
+#define MAXMMAPITEM  16
+
+struct mmapitem{
+  int   used;    // 当前映射项映射到的pid;  如果等于-1的话表示没有在使用
+  uint64   addr ;    // 创建的mmap的地址
+  int   length;   // 长度
+  int    prot;     // 权限
+  int    flags;     // 权限
+  int vfd;            // 对应的文件描述符
+  struct file* vfile; // 对应文件
+  int offset;         // 文件偏移，本实验中一直为0
+};
+
+
 // Per-process state
 struct proc {
   struct spinlock lock;
@@ -103,4 +118,6 @@ struct proc {
   struct file *ofile[NOFILE];  // Open files
   struct inode *cwd;           // Current directory
   char name[16];               // Process name (debugging)
+
+  struct mmapitem vma[MAXMMAPITEM];    // 虚拟内存区域
 };

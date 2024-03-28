@@ -19,6 +19,8 @@ struct {
   struct file file[NFILE];
 } ftable;
 
+
+
 void
 fileinit(void)
 {

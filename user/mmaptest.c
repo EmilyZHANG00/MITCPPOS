@@ -203,7 +203,7 @@ mmap_test(void)
   printf("test mmap two files\n");
   
   //
-  // mmap two files at the same time.
+  // mmap two files at the same time.    同时mmap了两个文件
   //
   int fd1;
   if((fd1 = open("mmap1", O_RDWR|O_CREATE)) < 0)
@@ -227,6 +227,7 @@ mmap_test(void)
   close(fd2);
   unlink("mmap2");
 
+  printf("%s , %s\n",p1,p2);
   if(memcmp(p1, "12345", 5) != 0)
     err("mmap1 mismatch");
   if(memcmp(p2, "67890", 5) != 0)

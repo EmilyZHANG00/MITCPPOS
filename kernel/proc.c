@@ -5,6 +5,7 @@
 #include "spinlock.h"
 #include "proc.h"
 #include "defs.h"
+#include "fcntl.h"
 
 struct cpu cpus[NCPU];
 
@@ -133,7 +134,7 @@ found:
   memset(&p->context, 0, sizeof(p->context));
   p->context.ra = (uint64)forkret;
   p->context.sp = p->kstack + PGSIZE;
-
+  memset(&p->vma, 0, sizeof(p->vma));   //文件映射
   return p;
 }
 
@@ -290,11 +291,22 @@ fork(void)
   // Cause fork to return 0 in the child.
   np->trapframe->a0 = 0;
 
-  // increment reference counts on open file descriptors.
+  // increment reference counts on open file descriptors.  
+  // 把某个文件复制一份给子进程的含义，本质就是把这个文件的信息结构体复制一份给子进程，并且把文件的引用数目 +1 
+
   for(i = 0; i < NOFILE; i++)
     if(p->ofile[i])
       np->ofile[i] = filedup(p->ofile[i]);
   np->cwd = idup(p->cwd);
+
+ #ifdef LAB_MMAP
+  for(i = 0; i < MAXMMAPITEM; ++i) {
+    if(p->vma[i].used) {
+      memmove(&np->vma[i], &p->vma[i], sizeof(p->vma[i]));
+      filedup(p->vma[i].vfile);
+    }
+  }
+ #endif
 
   safestrcpy(np->name, p->name, sizeof(p->name));
 
@@ -336,6 +348,7 @@ reparent(struct proc *p)
 // Exit the current process.  Does not return.
 // An exited process remains in the zombie state
 // until its parent calls wait().
+// 退出当前进程，退出的进程保存在zombie,知道他的父进程调用wait
 void
 exit(int status)
 {
@@ -352,6 +365,19 @@ exit(int status)
       p->ofile[fd] = 0;
     }
   }
+
+  #ifdef LAB_MMAP
+    for(int i = 0; i < MAXMMAPITEM; ++i) {
+    if(p->vma[i].used) {
+      if(p->vma[i].flags == MAP_SHARED && (p->vma[i].prot & PROT_WRITE) != 0) {
+        filewrite(p->vma[i].vfile, p->vma[i].addr, p->vma[i].length);
+      }
+      fileclose(p->vma[i].vfile);   //挨个关闭文件  并取消映射
+      uvmunmap(p->pagetable, p->vma[i].addr, p->vma[i].length / PGSIZE, 1);
+      p->vma[i].used = 0;
+    }
+  }
+  #endif
 
   begin_op();
   iput(p->cwd);

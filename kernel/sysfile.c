@@ -484,3 +484,170 @@ sys_pipe(void)
   }
   return 0;
 }
+
+
+#ifdef LAB_MMAP
+
+uint64
+sys_mmap(void)
+{
+  int length,prot,flags,offset,fd;
+  uint64 addr;
+  uint64 err = 0xffffffffffffffff;
+  struct file* vfile;
+
+  if(argaddr(0,&addr)<0 || argint(1,&length)<0 || argint(2,&prot)<0 ||argint(3,&flags)<0||argfd(4,&fd,&vfile)<0 ||argint(5,&offset)<0 )
+  return err;
+
+  // 实验提示中假定addr和offset为0，简化程序可能发生的情况
+  if(addr != 0 || offset != 0 || length < 0)
+    return err;
+
+  // 文件本身不可写，则不能建立写映射
+   if(vfile->writable == 0 && (prot & PROT_WRITE) != 0 && flags == MAP_SHARED)
+    return err;
+
+  struct proc *p = myproc();
+
+  // 查询mmapsarr数组看是否已经在文件中建立了映射;  
+  // for(int i=0;i<MAXMMAPITEM;i++){
+  //   if(p->vma[i].used == 1  && p->vma[i].vfd==fd)
+  //   {
+  //     return p->vma[i].addr;
+  //   }
+  // }
+
+  // 原本不存在相应的映射项目;
+  for(int i=0;i<MAXMMAPITEM;i++){
+    if(p->vma[i].used==0)    //表示找到了一个空的映射项，可以填入信息
+    {
+      p->vma[i].used=1;
+      p->vma[i].length = length;
+      p->vma[i].flags=flags;
+      p->vma[i].prot=prot;
+      p->vma[i].offset=0;
+      p->vma[i].vfd=fd;
+      p->vma[i].vfile=vfile;
+      p->vma[i].addr=p->sz;
+      filedup(vfile);
+
+      p->sz+=length;
+      return  p->vma[i].addr;
+    }
+  }
+  panic("no empty mmapitem!");
+  return -1;
+}
+
+
+int  mmap_handler(int va,int cause)
+{
+  // 分配实际页面
+  struct proc *p=myproc();
+  int i=0;
+
+  //寻找va对应落在哪一个文件映射的区间
+  for(i=0;i<MAXMMAPITEM;i++)
+  {
+    if(p->vma[i].used==1 && va>=p->vma[i].addr && va< (p->vma[i].addr+p->vma[i].length))
+    {
+       break;
+    }
+  }
+  if(i==MAXMMAPITEM)
+  {
+    return -1;
+  }
+  
+  struct file* f = p->vma[i].vfile;
+  // 读导致的页面错误
+  if(cause == 13 && f->readable == 0) return -1;
+  // 写导致的页面错误
+  if(cause == 15 && f->writable == 0) return -1;
+ 
+
+  // 设置页表项目标记位，标记位一定包含U,然后是根据建立映射的标记为来表示是否可读可写<没有有效位 V >
+  int pte_flags = PTE_U;
+  if(p->vma[i].prot & PROT_READ) pte_flags |= PTE_R;
+  if(p->vma[i].prot & PROT_WRITE) pte_flags |= PTE_W;
+  if(p->vma[i].prot & PROT_EXEC) pte_flags |= PTE_X;
+
+
+  void* pa = kalloc();   //申请一个页用来存放文件内容
+  if(pa == 0)
+    return -1;
+  memset(pa, 0, PGSIZE);
+
+    // 读取文件内容
+  ilock(f->ip);
+  // 计算当前页面读取文件的偏移量，实验中p->vma[i].offset总是0
+  int offset = p->vma[i].offset + PGROUNDDOWN(va - p->vma[i].addr);    //仅仅映射该虚拟地址应该对应的page,计算出虚拟地址va对应整个文件映射中的哪一页
+  int readbytes = readi(f->ip, 0, (uint64)pa, offset, PGSIZE);
+  // 什么都没有读到
+  if(readbytes == 0) {
+    iunlock(f->ip);
+    kfree(pa);
+    return -1;
+  }
+  iunlock(f->ip);
+
+  // 添加页面映射
+  if(mappages(p->pagetable, PGROUNDDOWN(va), PGSIZE, (uint64)pa, pte_flags) != 0) {
+    kfree(pa);
+    return -1;
+  }
+
+  return 0;
+}
+
+// 允许一小段一小段的取消映射
+uint64
+sys_munmap(void)
+{
+  uint64 addr;
+  int length;
+  if(argaddr(0, &addr) < 0 || argint(1, &length) < 0)
+    return -1;
+
+  struct proc *p=myproc();
+  int i=0;
+
+  //找到对应应该映射的项目
+  for(i=0;i<MAXMMAPITEM;i++)
+  {
+    if(p->vma[i].used && p->vma[i].length>=length)
+    {
+      if(p->vma[i].addr==addr)
+      {
+        p->vma[i].addr+=length;
+        p->vma[i].length-=length;
+        break;
+      }
+      else if(p->vma[i].addr+length==(p->vma[i].addr+p->vma[i].length))
+      {
+         p->vma[i].length-=length;
+         break;
+      }
+    }
+  }
+
+  if(i==MAXMMAPITEM)
+  return -1;
+
+  // 需要写回磁盘(通过inode进行写回)
+  if(p->vma[i].flags==MAP_SHARED && (p->vma[i].prot & PROT_WRITE)!=0)
+  {
+       filewrite(p->vma[i].vfile, addr, length);
+  }
+
+  // 取消从addr开始的length/PGSIZE个页面的映射
+  uvmunmap(p->pagetable, addr, length / PGSIZE, 1);
+
+   if(p->vma[i].length == 0) {
+    fileclose(p->vma[i].vfile);            //这里的fileclose关闭文件，只是将文件关闭一次(即引用数目减1)
+    p->vma[i].used = 0;
+  }
+  return 0;
+}
+
+#endif

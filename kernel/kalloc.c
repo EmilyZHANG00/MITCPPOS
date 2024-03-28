@@ -18,6 +18,9 @@ struct run {
   struct run *next;
 };
 
+
+
+
 struct {
   struct spinlock lock;
   struct run *freelist;
@@ -27,6 +30,7 @@ void
 kinit()
 {
   initlock(&kmem.lock, "kmem");
+
   freerange(end, (void*)PHYSTOP);
 }
 
