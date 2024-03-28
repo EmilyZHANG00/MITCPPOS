@@ -32,7 +32,7 @@ trapinithart(void)
 //
 // handle an interrupt, exception, or system call from user space.
 // called from trampoline.S
-//
+//  
 void
 usertrap(void)
 {

@@ -26,12 +26,13 @@
 // only one device
 struct superblock sb; 
 
+
 // Read the super block.
+/* 读取超级块,拷贝到内存对应位置*/
 static void
 readsb(int dev, struct superblock *sb)
 {
   struct buf *bp;
-
   bp = bread(dev, 1);
   memmove(sb, bp->data, sizeof(*sb));
   brelse(bp);
@@ -246,7 +247,7 @@ iget(uint dev, uint inum)
 
   acquire(&icache.lock);
 
-  // Is the inode already cached?
+  // Is the inode already cached?  先去判断磁盘上第inum个dinode是不是已经在内存节点中了
   empty = 0;
   for(ip = &icache.inode[0]; ip < &icache.inode[NINODE]; ip++){
     if(ip->ref > 0 && ip->dev == dev && ip->inum == inum){
@@ -254,7 +255,7 @@ iget(uint dev, uint inum)
       release(&icache.lock);
       return ip;
     }
-    if(empty == 0 && ip->ref == 0)    // Remember empty slot.
+    if(empty == 0 && ip->ref == 0)    // Remember empty slot. 如果没有找到，但是当前节点是空的话
       empty = ip;
   }
 
@@ -265,8 +266,8 @@ iget(uint dev, uint inum)
   ip = empty;
   ip->dev = dev;
   ip->inum = inum;
-  ip->ref = 1;
-  ip->valid = 0;
+  ip->ref = 1;          //已经对应好了，但是没有进行读取数据??
+  ip->valid = 0;  
   release(&icache.lock);
 
   return ip;
@@ -374,12 +375,15 @@ iunlockput(struct inode *ip)
 
 // Return the disk block address of the nth block in inode ip.
 // If there is no such block, bmap allocates one.
+
+// bn相对于文件来说的“逻辑地址”;
 static uint
 bmap(struct inode *ip, uint bn)
 {
   uint addr, *a;
   struct buf *bp;
 
+  //  如果是小于NDIRECT通过直接块就可以访问到,如果为空的话就去申请相应的块
   if(bn < NDIRECT){
     if((addr = ip->addrs[bn]) == 0)
       ip->addrs[bn] = addr = balloc(ip->dev);
@@ -387,7 +391,8 @@ bmap(struct inode *ip, uint bn)
   }
   bn -= NDIRECT;
 
-  if(bn < NINDIRECT){
+  // 通过一级间接地址可以访问到,如果为空的话就去申请相应的块
+  if(bn < NINDIRECT1){
     // Load indirect block, allocating if necessary.
     if((addr = ip->addrs[NDIRECT]) == 0)
       ip->addrs[NDIRECT] = addr = balloc(ip->dev);
@@ -400,7 +405,34 @@ bmap(struct inode *ip, uint bn)
     brelse(bp);
     return addr;
   }
+  bn -= NINDIRECT1;
 
+  // 通过二级间接地址进行访问 总共由256*256个
+  if(bn < NINDIRECT2){
+    // 如果二级地址块还没生成的话，先生成二级地址块
+    if((addr = ip->addrs[NDIRECT+1]) == 0)
+      ip->addrs[NDIRECT+1] = addr = balloc(ip->dev);
+    // 读取二级间接块的内容
+    bp = bread(ip->dev, addr);
+    a = (uint*)bp->data;
+
+    // 寻找对应的一级块的内容，如果目前不存在的话就创建一个新的块
+    if((addr = a[bn/NINDIRECT1]) == 0){
+      a[bn/NINDIRECT1]  = addr = balloc(ip->dev);
+          log_write(bp);
+    }
+    brelse(bp);
+
+    bp = bread(ip->dev, addr);
+    a = (uint*)bp->data;
+    if((addr = a[bn%NINDIRECT1]) == 0){
+      a[bn%NINDIRECT1] = addr = balloc(ip->dev);
+      log_write(bp);
+    }
+    brelse(bp);
+    return addr;
+  }
+  
   panic("bmap: out of range");
 }
 
@@ -413,6 +445,7 @@ itrunc(struct inode *ip)
   struct buf *bp;
   uint *a;
 
+  // 释放直接块
   for(i = 0; i < NDIRECT; i++){
     if(ip->addrs[i]){
       bfree(ip->dev, ip->addrs[i]);
@@ -420,10 +453,11 @@ itrunc(struct inode *ip)
     }
   }
 
+  // 释放一级间接块对应的内容以及一级间接块本身
   if(ip->addrs[NDIRECT]){
     bp = bread(ip->dev, ip->addrs[NDIRECT]);
     a = (uint*)bp->data;
-    for(j = 0; j < NINDIRECT; j++){
+    for(j = 0; j < NINDIRECT1; j++){
       if(a[j])
         bfree(ip->dev, a[j]);
     }
@@ -432,8 +466,61 @@ itrunc(struct inode *ip)
     ip->addrs[NDIRECT] = 0;
   }
 
+
+
+  // struct buf* bp1;
+  // uint* a1;
+  // if(ip->addrs[NDIRECT + 1]) {
+  //   bp = bread(ip->dev, ip->addrs[NDIRECT + 1]);
+  //   a = (uint*)bp->data;
+  //   for(i = 0; i < NINDIRECT1; i++) {
+  //     // 每个一级间接块的操作都类似于上面的
+  //     // if(ip->addrs[NDIRECT])中的内容
+  //     if(a[i]) {
+  //       bp1 = bread(ip->dev, a[i]);
+  //       a1 = (uint*)bp1->data;
+  //       for(j = 0; j < NINDIRECT1; j++) {
+  //         if(a1[j])
+  //           bfree(ip->dev, a1[j]);
+  //       }
+  //       brelse(bp1);
+  //       bfree(ip->dev, a[i]);
+  //     }
+  //   }
+  //   brelse(bp);
+  //   bfree(ip->dev, ip->addrs[NDIRECT + 1]);
+  //   ip->addrs[NDIRECT + 1] = 0;
+  // }
+
+
+  //  // 释放二级间接块对应的内容以及一级间接块本身
+  if(ip->addrs[NDIRECT+1]){
+    struct buf *inder2bp = bread(ip->dev, ip->addrs[NDIRECT+1]);     // 2级间接对应块
+    uint *indir2a=(uint*)inder2bp->data;       // 2级间接块对应的各个一级间接块所在的地址
+
+    for(j = 0; j < NINDIRECT1; j++){
+      //只有1级间接块存在的时候，才需要进行以下操作
+      if(indir2a[j])                        
+      {
+        bp = bread(ip->dev, indir2a[j]);       //2级间接块对应的内容存储到一个buf cache里面以进行读取
+        a = (uint*)bp->data;                   //相应的buf中存储的数据都是地址
+
+        for(int k = 0; k < NINDIRECT1; k++){
+          if(a[k])
+            bfree(ip->dev, a[k]);      // 释放对应的物理空间
+        } 
+
+        brelse(bp);                    // 释放对应的buf缓冲块，表示该缓冲块现在可以用来去缓冲别的数据了
+        bfree(ip->dev,indir2a[j]);     // 释放相应的磁盘空间
+
+      }
+    }
+    brelse(inder2bp);
+    bfree(ip->dev, ip->addrs[NDIRECT+1]);
+    ip->addrs[NDIRECT+1] = 0;
+  }
   ip->size = 0;
-  iupdate(ip);
+  iupdate(ip);  
 }
 
 // Copy stat information from inode.
@@ -452,6 +539,7 @@ stati(struct inode *ip, struct stat *st)
 // Caller must hold ip->lock.
 // If user_dst==1, then dst is a user virtual address;
 // otherwise, dst is a kernel address.
+// 从inode节点读取数据 (需要调用bmap进行映射，找到磁盘上对应的物理节点是哪一个)
 int
 readi(struct inode *ip, int user_dst, uint64 dst, uint off, uint n)
 {
@@ -483,6 +571,7 @@ readi(struct inode *ip, int user_dst, uint64 dst, uint off, uint n)
 // Returns the number of bytes successfully written.
 // If the return value is less than the requested n,
 // there was an error of some kind.
+// 向磁盘写入数据的时候也需要调用bmap,找到应该往哪个inode写入数据
 int
 writei(struct inode *ip, int user_src, uint64 src, uint off, uint n)
 {
@@ -630,22 +719,28 @@ namex(char *path, int nameiparent, char *name)
 {
   struct inode *ip, *next;
 
+  // 如果以/开头，从根目录开始计算，否则从当前目录开始计算
   if(*path == '/')
     ip = iget(ROOTDEV, ROOTINO);
   else
     ip = idup(myproc()->cwd);
 
+  // 依次查看路径中的每个元素 
   while((path = skipelem(path, name)) != 0){
-    ilock(ip);
+    ilock(ip);   // 把当前目录的inode锁住，查看当前的inode是不是一个目录，如果不是的话直接返回
     if(ip->type != T_DIR){
       iunlockput(ip);
       return 0;
     }
+
+    // 如果设置了nameiparent 选项的话，提前一层返回
     if(nameiparent && *path == '\0'){
       // Stop one level early.
       iunlock(ip);
       return ip;
     }
+
+    // 在当前节点ip中查找name是否存在
     if((next = dirlookup(ip, name, 0)) == 0){
       iunlockput(ip);
       return 0;

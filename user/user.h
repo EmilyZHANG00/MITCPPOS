@@ -23,6 +23,7 @@ int getpid(void);
 char* sbrk(int);
 int sleep(int);
 int uptime(void);
+int symlink(char *,char *);    //两个传入参数，分别表示目标文件和路径
 
 // ulib.c
 int stat(const char*, struct stat*);

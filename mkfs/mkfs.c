@@ -267,23 +267,23 @@ iappend(uint inum, void *xp, int n)
   uint fbn, off, n1;
   struct dinode din;
   char buf[BSIZE];
-  uint indirect[NINDIRECT];
+  uint indirect[NINDIRECT1];    //NINDIRECT1个非直接地址的物理块的地址
   uint x;
 
   rinode(inum, &din);
-  off = xint(din.size);
+  off = xint(din.size);    //偏移量 大小端转换
   // printf("append inum %d at off %d sz %d\n", inum, off, n);
   while(n > 0){
-    fbn = off / BSIZE;
-    assert(fbn < MAXFILE);
-    if(fbn < NDIRECT){
+    fbn = off / BSIZE;       // 偏移量除以每个块的大小，得到块号
+    assert(fbn < MAXFILE);   // 保证在允许的最大文件范围内
+    if(fbn < NDIRECT){       // 小于直接块的数目，直接读取
       if(xint(din.addrs[fbn]) == 0){
-        din.addrs[fbn] = xint(freeblock++);
+        din.addrs[fbn] = xint(freeblock++);      //该地址对应的块号
       }
       x = xint(din.addrs[fbn]);
-    } else {
+    } else {                  // 不在直接块里面 1级间接块内容为空
       if(xint(din.addrs[NDIRECT]) == 0){
-        din.addrs[NDIRECT] = xint(freeblock++);
+        din.addrs[NDIRECT] = xint(freeblock++);     //指定1级别间接内容块
       }
       rsect(xint(din.addrs[NDIRECT]), (char*)indirect);
       if(indirect[fbn - NDIRECT] == 0){
@@ -292,6 +292,7 @@ iappend(uint inum, void *xp, int n)
       }
       x = xint(indirect[fbn-NDIRECT]);
     }
+
     n1 = min(n, (fbn + 1) * BSIZE - off);
     rsect(x, buf);
     bcopy(p, buf + off - (fbn * BSIZE), n1);
